@@ -158,3 +158,6 @@ Built for educational and production use on Stellar Soroban.
 ---
 
 **Ready to deploy?** Run `./deploy.sh` or follow [DEPLOY.md](./DEPLOY.md)!
+Contract detail
+![PHOTO-2025-11-02-18-49-39](https://github.com/user-attachments/assets/2e1fb7dc-6a47-4559-a569-38bdd1547b74)
+CC2OBONLPDUPDMWJ34E77F2YKECLCWC5XS26EZG2KVV5OAS3LW4ZP2MD
