@@ -1,0 +1,17 @@
+[package]
+name = "dao_treasury"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Pick a recent soroban-sdk version; you may need to update this to match your local soroban tooling.
+soroban-sdk = "23.1.0"
+
+[dev-dependencies]
+soroban-sdk = { version = "23.1.0", features = ["testutils"] }
+
+[profile.release]
+opt-level = "z"
