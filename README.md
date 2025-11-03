@@ -1,24 +1,19 @@
-# DAO Treasury Smart Contract (Soroban)
+# Decentralized Treasury Management
 
-A production-ready Stellar Soroban smart contract for DAO treasury management with proposal creation, voting, and fund execution capabilities.
-
-## 🎯 Features
-
-✅ **Proposal Management** - Create, vote, and execute funding proposals  
-✅ **Treasury Tracking** - Internal balance bookkeeping  
-✅ **Voting System** - Simple majority approval mechanism  
-✅ **Unit Tested** - 100% test coverage with passing tests  
-✅ **Soroban SDK 23.1.0** - Built with latest stable SDK  
+A complete blockchain-based DAO treasury management system built on Stellar Soroban.
 
 ## 📁 Project Structure
 
 ```
-smart-contract/
-├── src/lib.rs          # Contract implementation + tests
-├── Cargo.toml          # Rust dependencies
-├── README.md           # This file
-├── DEPLOY.md           # Detailed deployment guide
-└── deploy.sh           # Automated deployment script
+Decentralized-treasury-management1/
+├── src/                    # Rust smart contract (Soroban)
+│   └── lib.rs             # Treasury contract implementation
+├── frontend/              # Next.js web application
+│   ├── app/              # Next.js app directory
+│   ├── components/       # React components
+│   └── store/            # State management
+├── Cargo.toml            # Rust dependencies
+└── README.md             # This file
 ```
 
 ## 🚀 Quick Start
