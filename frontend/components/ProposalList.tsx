@@ -6,11 +6,25 @@ import { useState } from 'react';
 import { useWalletStore } from '@/store/walletStore';
 import { toast } from 'sonner';
 
+// Freighter API type declarations
+declare global {
+  interface Window {
+    freighterApi?: {
+      isConnected: () => Promise<boolean>;
+      getPublicKey: () => Promise<string>;
+      signTransaction: (xdr: string, opts?: { network?: string; networkPassphrase?: string }) => Promise<string>;
+    };
+    freighter?: {
+      signTransaction: (xdr: string, opts?: { network?: string; networkPassphrase?: string }) => Promise<string>;
+    };
+  }
+}
+
 const MINIMUM_BALANCE = 1; // Keep at least 1 XLM for account minimum
 const TRANSACTION_FEE = 0.00001; // Stellar base fee
 
 export default function ProposalList() {
-  const { proposals, updateProposal, publicKey, balance, setBalance } = useWalletStore();
+  const { proposals, updateProposal, publicKey, balance, setBalance, isConnected } = useWalletStore();
   const [filter, setFilter] = useState<'all' | 'active' | 'executed'>('all');
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -40,9 +54,22 @@ export default function ProposalList() {
     }
 
     try {
-      // Safety checks
-      if (!publicKey) {
-        toast.error('Please connect your wallet first');
+      // Check wallet connection and get latest publicKey from Freighter
+      if (!isConnected || !publicKey) {
+        toast.error('Wallet not connected. Please connect your wallet first.');
+        return;
+      }
+
+      // Verify wallet is still connected by checking Freighter
+      if (!window.freighterApi || !await window.freighterApi.isConnected()) {
+        toast.error('Wallet connection lost. Please reconnect your wallet.');
+        return;
+      }
+
+      // Get the current public key from Freighter to ensure it's up to date
+      const currentPublicKey = await window.freighterApi.getPublicKey();
+      if (!currentPublicKey) {
+        toast.error('Unable to get wallet address. Please reconnect your wallet.');
         return;
       }
 
@@ -82,8 +109,8 @@ export default function ProposalList() {
       // Use testnet
       const server = new StellarSdk.Horizon.Server('https://horizon-testnet.stellar.org');
       
-      // Load source account
-      const sourceAccount = await server.loadAccount(publicKey);
+      // Load source account using the current public key from Freighter
+      const sourceAccount = await server.loadAccount(currentPublicKey);
       
       // Build transaction
       const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
