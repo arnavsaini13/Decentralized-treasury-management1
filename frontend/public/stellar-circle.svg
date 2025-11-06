@@ -1,0 +1,8 @@
+<svg viewBox="0 0 500 500" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Black circle background -->
+  <circle cx="250" cy="250" r="250" fill="#000000"/>
+  <!-- White Stellar logo -->
+  <circle cx="250" cy="250" r="120" fill="none" stroke="#FFFFFF" stroke-width="28"/>
+  <rect x="120" y="180" width="380" height="48" fill="#FFFFFF" transform="rotate(30 250 250)"/>
+  <rect x="120" y="272" width="380" height="48" fill="#FFFFFF" transform="rotate(30 250 250)"/>
+</svg>

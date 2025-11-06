@@ -3,18 +3,17 @@
 import { motion } from 'framer-motion';
 import { ThumbsUp, ThumbsDown, CheckCircle2, Clock, Filter, Search } from 'lucide-react';
 import { useState } from 'react';
-import { useWalletStore } from '@/store/walletStore';
+import { useWalletStore, TREASURY_WALLET } from '@/store/walletStore';
 import { toast } from 'sonner';
+import { executePaymentWithFallback } from '@/lib/stellarTransactionFallback';
 
 // Freighter API type declarations
 declare global {
   interface Window {
-    freighterApi?: {
+    freighter?: {
       isConnected: () => Promise<boolean>;
       getPublicKey: () => Promise<string>;
-      signTransaction: (xdr: string, opts?: { network?: string; networkPassphrase?: string }) => Promise<string>;
-    };
-    freighter?: {
+      getNetwork: () => Promise<string>;
       signTransaction: (xdr: string, opts?: { network?: string; networkPassphrase?: string }) => Promise<string>;
     };
   }
@@ -29,18 +28,41 @@ export default function ProposalList() {
   const [searchTerm, setSearchTerm] = useState('');
 
   const handleVote = async (proposalId: number, approve: boolean) => {
+    // Check if wallet is connected
+    if (!publicKey) {
+      toast.error('Please connect your wallet to vote');
+      return;
+    }
+
     try {
-      // In production, call smart contract here
-      toast.success(`Vote ${approve ? 'approved' : 'rejected'} successfully!`);
-      
-      // Update local state
+      // Find the proposal
       const proposal = proposals.find(p => p.id === proposalId);
-      if (proposal) {
-        updateProposal(proposalId, {
-          approvals: approve ? proposal.approvals + 1 : proposal.approvals,
-          rejections: !approve ? proposal.rejections + 1 : proposal.rejections,
-        });
+      if (!proposal) {
+        toast.error('Proposal not found');
+        return;
       }
+
+      // Check if user has already voted
+      if (proposal.voters && proposal.voters.includes(publicKey)) {
+        toast.error('❌ You have already voted on this proposal!', {
+          description: 'Each wallet can only vote once per proposal'
+        });
+        return;
+      }
+
+      // Add vote
+      const newVoters = [...(proposal.voters || []), publicKey];
+      
+      updateProposal(proposalId, {
+        approvals: approve ? proposal.approvals + 1 : proposal.approvals,
+        rejections: !approve ? proposal.rejections + 1 : proposal.rejections,
+        voters: newVoters,
+      });
+
+      toast.success(`✅ Vote ${approve ? 'approved' : 'rejected'} successfully!`, {
+        description: `You can no longer vote on this proposal`
+      });
+      
     } catch (error) {
       toast.error('Failed to submit vote');
     }
@@ -54,22 +76,20 @@ export default function ProposalList() {
     }
 
     try {
-      // Check wallet connection and get latest publicKey from Freighter
-      if (!isConnected || !publicKey) {
+      // Use treasury wallet public key for transactions
+      const sourceKey = publicKey || TREASURY_WALLET.publicKey;
+      
+      // Check wallet connection
+      if (!sourceKey) {
         toast.error('Wallet not connected. Please connect your wallet first.');
         return;
       }
 
-      // Verify wallet is still connected by checking Freighter
-      if (!window.freighterApi || !await window.freighterApi.isConnected()) {
-        toast.error('Wallet connection lost. Please reconnect your wallet.');
-        return;
-      }
-
-      // Get the current public key from Freighter to ensure it's up to date
-      const currentPublicKey = await window.freighterApi.getPublicKey();
-      if (!currentPublicKey) {
-        toast.error('Unable to get wallet address. Please reconnect your wallet.');
+      // 🔒 ADMIN CHECK: Only treasury owner can execute proposals
+      if (sourceKey !== TREASURY_WALLET.publicKey) {
+        toast.error('⛔ Access Denied: Only the treasury owner can execute proposals.', {
+          description: `Treasury Owner: ${TREASURY_WALLET.publicKey.slice(0, 8)}...${TREASURY_WALLET.publicKey.slice(-8)}`
+        });
         return;
       }
 
@@ -95,81 +115,55 @@ export default function ProposalList() {
         return;
       }
 
-      toast.loading('Preparing transaction...', { id: 'execute' });
-
-      // Check if Freighter is available
-      if (typeof window === 'undefined' || !(window as any).freighter) {
-        toast.error('Freighter wallet not found', { id: 'execute' });
-        return;
-      }
-
-      // Build the transaction using Stellar SDK
-      const StellarSdk = await import('@stellar/stellar-sdk');
+      toast.loading('Preparing real transaction...', { id: 'execute' });
       
-      // Use testnet
-      const server = new StellarSdk.Horizon.Server('https://horizon-testnet.stellar.org');
-      
-      // Load source account using the current public key from Freighter
-      const sourceAccount = await server.loadAccount(currentPublicKey);
-      
-      // Build transaction
-      const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
-        fee: StellarSdk.BASE_FEE,
-        networkPassphrase: StellarSdk.Networks.TESTNET,
-      })
-        .addOperation(
-          StellarSdk.Operation.payment({
-            destination: proposal.recipient,
-            asset: StellarSdk.Asset.native(),
-            amount: proposal.amount,
-          })
-        )
-        .addMemo(StellarSdk.Memo.text(`DAO Proposal #${proposal.id}`))
-        .setTimeout(180)
-        .build();
-
-      toast.loading('Waiting for signature...', { id: 'execute' });
-
-      // Sign with Freighter
-      const { signTransaction } = (window as any).freighter;
-      const signedXDR = await signTransaction(transaction.toXDR(), {
-        network: 'TESTNET',
-        networkPassphrase: StellarSdk.Networks.TESTNET,
+      // Execute REAL Stellar transaction with automatic Freighter/Secret Key fallback
+      const result = await executePaymentWithFallback({
+        sourcePublicKey: sourceKey,
+        destinationPublicKey: proposal.recipient,
+        amount: proposal.amount,
+        memo: `DAO Proposal #${proposalId}`,
+        network: 'testnet',
+        secretKey: TREASURY_WALLET.secretKey || undefined // Use secret key if Freighter fails
       });
 
-      toast.loading('Submitting to Stellar network...', { id: 'execute' });
+      if (result.success) {
+        // Update UI
+        updateProposal(proposalId, { executed: true });
+        
+        // Refresh balance from blockchain
+        toast.loading('Refreshing balance...', { id: 'execute' });
+        const response = await fetch(`https://horizon-testnet.stellar.org/accounts/${sourceKey}`);
+        if (response.ok) {
+          const data = await response.json();
+          const xlmBalance = data.balances.find((b: any) => b.asset_type === 'native');
+          if (xlmBalance) {
+            setBalance(xlmBalance.balance);
+          }
+        }
 
-      // Submit transaction
-      const signedTransaction = StellarSdk.TransactionBuilder.fromXDR(
-        signedXDR,
-        StellarSdk.Networks.TESTNET
-      );
-      
-      const result = await server.submitTransaction(signedTransaction as any);
-
-      // Update UI
-      updateProposal(proposalId, { executed: true });
-      
-      // Update balance
-      const newBalance = currentBalance - totalCost;
-      setBalance(newBalance.toString());
-
-      toast.success(
-        `✅ ${transferAmount} XLM transferred successfully!\nTransaction Hash: ${result.hash.slice(0, 8)}...`,
-        { id: 'execute', duration: 5000 }
-      );
+        toast.success(
+          `✅ ${transferAmount} XLM transferred successfully!\n🔗 Hash: ${result.hash?.slice(0, 12)}...\n📊 Ledger: ${result.ledger}`,
+          { id: 'execute', duration: 6000 }
+        );
+        
+        // Show link to view transaction
+        setTimeout(() => {
+          toast.info(
+            <div className="cursor-pointer" onClick={() => window.open(`https://stellar.expert/explorer/testnet/tx/${result.hash}`, '_blank')}>
+              Click to view transaction on Stellar Explorer →
+            </div>,
+            { duration: 8000 }
+          );
+        }, 1000);
+        
+      } else {
+        toast.error(result.error || 'Transaction failed', { id: 'execute' });
+      }
 
     } catch (error: any) {
       console.error('Execution error:', error);
-      
-      if (error.message?.includes('user declined')) {
-        toast.error('Transaction cancelled by user', { id: 'execute' });
-      } else if (error.response?.data?.extras?.result_codes) {
-        const codes = error.response.data.extras.result_codes;
-        toast.error(`Transaction failed: ${codes.transaction || codes.operations?.[0]}`, { id: 'execute' });
-      } else {
-        toast.error(`Failed to execute: ${error.message || 'Unknown error'}`, { id: 'execute' });
-      }
+      toast.error(`Failed to execute: ${error.message || 'Unknown error'}`, { id: 'execute' });
     }
   };
 
@@ -250,9 +244,18 @@ export default function ProposalList() {
             >
               <div className="flex items-start justify-between mb-4">
                 <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-2">
+                  <div className="flex items-center gap-3 mb-2 flex-wrap">
                     <span className="px-3 py-1 bg-blue-500/20 border border-blue-500/30 rounded-lg text-blue-400 text-sm font-semibold">
                       #{proposal.id}
+                    </span>
+                    <span className="px-3 py-1 bg-purple-500/20 border border-purple-500/30 rounded-lg text-purple-400 text-sm font-semibold">
+                      {proposal.category === 'Development' && '💻'}
+                      {proposal.category === 'Marketing' && '📢'}
+                      {proposal.category === 'Security' && '🔒'}
+                      {proposal.category === 'Social' && '🤝'}
+                      {proposal.category === 'Infrastructure' && '🏗️'}
+                      {proposal.category === 'Other' && '📋'}
+                      {' '}{proposal.category}
                     </span>
                     {proposal.executed ? (
                       <span className="flex items-center gap-1 px-3 py-1 bg-green-500/20 border border-green-500/30 rounded-lg text-green-400 text-sm">
@@ -307,36 +310,65 @@ export default function ProposalList() {
 
               {/* Actions */}
               {!proposal.executed && (
-                <div className="flex gap-3">
-                  <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() => handleVote(proposal.id, true)}
-                    className="flex-1 px-4 py-3 bg-green-500/20 border border-green-500/30 rounded-xl text-green-400 font-semibold hover:bg-green-500/30 transition-all flex items-center justify-center gap-2"
-                  >
-                    <ThumbsUp className="w-5 h-5" />
-                    Approve
-                  </motion.button>
-                  <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() => handleVote(proposal.id, false)}
-                    className="flex-1 px-4 py-3 bg-red-500/20 border border-red-500/30 rounded-xl text-red-400 font-semibold hover:bg-red-500/30 transition-all flex items-center justify-center gap-2"
-                  >
-                    <ThumbsDown className="w-5 h-5" />
-                    Reject
-                  </motion.button>
-                  {proposal.approvals > proposal.rejections && (
-                    <motion.button
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
-                      onClick={() => handleExecute(proposal.id)}
-                      className="px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 rounded-xl text-white font-semibold hover:shadow-lg hover:shadow-purple-500/50 transition-all flex items-center gap-2"
-                    >
-                      <CheckCircle2 className="w-5 h-5" />
-                      Execute
-                    </motion.button>
+                <div className="space-y-3">
+                  {/* Show if user has already voted */}
+                  {publicKey && proposal.voters?.includes(publicKey) && (
+                    <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-xl text-center">
+                      <p className="text-blue-400 text-sm font-semibold">
+                        ✓ You have already voted on this proposal
+                      </p>
+                    </div>
                   )}
+                  
+                  <div className="flex gap-3">
+                    <motion.button
+                      whileHover={{ scale: publicKey && !proposal.voters?.includes(publicKey) ? 1.02 : 1 }}
+                      whileTap={{ scale: publicKey && !proposal.voters?.includes(publicKey) ? 0.98 : 1 }}
+                      onClick={() => handleVote(proposal.id, true)}
+                      disabled={!publicKey || proposal.voters?.includes(publicKey)}
+                      className={`flex-1 px-4 py-3 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
+                        !publicKey || proposal.voters?.includes(publicKey)
+                          ? 'bg-gray-500/10 border border-gray-500/20 text-gray-500 cursor-not-allowed'
+                          : 'bg-green-500/20 border border-green-500/30 text-green-400 hover:bg-green-500/30'
+                      }`}
+                    >
+                      <ThumbsUp className="w-5 h-5" />
+                      Approve
+                    </motion.button>
+                    <motion.button
+                      whileHover={{ scale: publicKey && !proposal.voters?.includes(publicKey) ? 1.02 : 1 }}
+                      whileTap={{ scale: publicKey && !proposal.voters?.includes(publicKey) ? 0.98 : 1 }}
+                      onClick={() => handleVote(proposal.id, false)}
+                      disabled={!publicKey || proposal.voters?.includes(publicKey)}
+                      className={`flex-1 px-4 py-3 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
+                        !publicKey || proposal.voters?.includes(publicKey)
+                          ? 'bg-gray-500/10 border border-gray-500/20 text-gray-500 cursor-not-allowed'
+                          : 'bg-red-500/20 border border-red-500/30 text-red-400 hover:bg-red-500/30'
+                      }`}
+                    >
+                      <ThumbsDown className="w-5 h-5" />
+                      Reject
+                    </motion.button>
+                    {/* Only show Execute button to treasury owner */}
+                    {proposal.approvals > proposal.rejections && publicKey === TREASURY_WALLET.publicKey && (
+                      <motion.button
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        onClick={() => handleExecute(proposal.id)}
+                        className="px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 rounded-xl text-white font-semibold hover:shadow-lg hover:shadow-purple-500/50 transition-all flex items-center gap-2"
+                      >
+                        <CheckCircle2 className="w-5 h-5" />
+                        Execute (Owner Only)
+                      </motion.button>
+                    )}
+                    {/* Show message for non-owners */}
+                    {proposal.approvals > proposal.rejections && publicKey !== TREASURY_WALLET.publicKey && (
+                      <div className="px-6 py-3 bg-gray-500/20 border border-gray-500/30 rounded-xl text-gray-400 font-semibold flex items-center gap-2">
+                        <CheckCircle2 className="w-5 h-5" />
+                        Execution (Owner Only)
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </motion.div>

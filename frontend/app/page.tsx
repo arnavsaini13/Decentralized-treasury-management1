@@ -20,11 +20,12 @@ import Navigation from '@/components/Navigation';
 import Dashboard from '@/components/Dashboard';
 import ProposalList from '@/components/ProposalList';
 import CreateProposal from '@/components/CreateProposal';
+import Leaderboard from '@/components/Leaderboard';
 import TreasuryStats from '@/components/TreasuryStats';
 import { useWalletStore } from '@/store/walletStore';
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'home' | 'dashboard' | 'proposals' | 'create'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'dashboard' | 'proposals' | 'create' | 'leaderboard'>('home');
   const { publicKey } = useWalletStore();
 
   useEffect(() => {
@@ -78,8 +79,9 @@ export default function Home() {
       <main className="min-h-screen">
         <Navigation activeTab={activeTab} setActiveTab={setActiveTab} />
         <div className="pt-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto pb-12">
-          {activeTab === 'dashboard' && <Dashboard />}
+          {activeTab === 'dashboard' && <Dashboard setActiveTab={setActiveTab} />}
           {activeTab === 'proposals' && <ProposalList />}
+          {activeTab === 'leaderboard' && <Leaderboard />}
           {activeTab === 'create' && <CreateProposal />}
         </div>
       </main>

@@ -1,9 +1,9 @@
 "use client";
 
 import { motion } from 'framer-motion';
-import { Send, Wallet, FileText, User } from 'lucide-react';
+import { Send, Wallet, FileText, User, Tag } from 'lucide-react';
 import { useState } from 'react';
-import { useWalletStore } from '@/store/walletStore';
+import { useWalletStore, ProposalCategory } from '@/store/walletStore';
 import { toast } from 'sonner';
 
 export default function CreateProposal() {
@@ -12,13 +12,14 @@ export default function CreateProposal() {
     description: '',
     recipient: '',
     amount: '',
+    category: 'Development' as ProposalCategory,
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!formData.description || !formData.recipient || !formData.amount) {
+    if (!formData.description || !formData.recipient || !formData.amount || !formData.category) {
       toast.error('Please fill in all fields');
       return;
     }
@@ -39,8 +40,10 @@ export default function CreateProposal() {
         description: formData.description,
         recipient: formData.recipient,
         amount: formData.amount,
+        category: formData.category,
         approvals: 0,
         rejections: 0,
+        voters: [], // Initialize empty voters array
         executed: false,
         createdAt: new Date(),
       };
@@ -53,6 +56,7 @@ export default function CreateProposal() {
         description: '',
         recipient: '',
         amount: '',
+        category: 'Development',
       });
     } catch (error) {
       toast.error('Failed to create proposal');
@@ -142,6 +146,29 @@ export default function CreateProposal() {
           </p>
         </div>
 
+        {/* Category */}
+        <div>
+          <label className="flex items-center gap-2 text-white font-semibold mb-3">
+            <Tag className="w-5 h-5 text-purple-400" />
+            Category
+          </label>
+          <select
+            value={formData.category}
+            onChange={(e) => setFormData({ ...formData, category: e.target.value as ProposalCategory })}
+            className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+          >
+            <option value="Development" className="bg-gray-900">💻 Development</option>
+            <option value="Marketing" className="bg-gray-900">📢 Marketing</option>
+            <option value="Security" className="bg-gray-900">🔒 Security</option>
+            <option value="Social" className="bg-gray-900">🤝 Social</option>
+            <option value="Infrastructure" className="bg-gray-900">🏗️ Infrastructure</option>
+            <option value="Other" className="bg-gray-900">📋 Other</option>
+          </select>
+          <p className="text-gray-500 text-sm mt-2">
+            Select the category that best describes this proposal
+          </p>
+        </div>
+
         {/* Preview */}
         {(formData.description || formData.recipient || formData.amount) && (
           <motion.div
@@ -158,6 +185,12 @@ export default function CreateProposal() {
                 <div>
                   <span className="text-gray-400">Description:</span>
                   <p className="text-white mt-1">{formData.description}</p>
+                </div>
+              )}
+              {formData.category && (
+                <div>
+                  <span className="text-gray-400">Category:</span>
+                  <p className="text-purple-400 font-semibold mt-1">{formData.category}</p>
                 </div>
               )}
               {formData.recipient && (
